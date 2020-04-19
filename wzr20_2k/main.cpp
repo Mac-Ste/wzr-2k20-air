@@ -3,13 +3,13 @@
     The main module
 ****************************************************/
 
-bool if_prediction_test = false;
+bool if_prediction_test = true;
 bool if_delays = false;
 bool if_reflection = true;
 // Scenariusz testu predykcji - tzw. benchmark - dziêki temu mo¿na porównaæ ró¿ne algorytmy predykcji na tym samym scenariuszu:
 // {czas [s], si³a [N], prêdkoœæ skrêcania kó³ [rad/s], stopieñ hamowania} -> przez jaki czas obiekt ma sie poruszaæ z podan¹ prêdkoœci¹ i k¹tem skrêtu kó³
-float test_scenario[][4] = { { 9.5, 110, 0, 0 }, { 5, 20, -0.25 / 8, 0 }, { 0.5, 0, 0, 1.0 }, { 5, 60, 0.25 / 8, 0 }, { 15, 100, 0, 0 } };
-//float test_scenario[][4] = { { 9.5, 500, 0, 0 }, { 10, -200, -0.25 / 2, 0 } };  // scenariusz ekstremalny
+//float test_scenario[][4] = { { 9.5, 110, 0, 0 }, { 5, 20, -0.25 / 8, 0 }, { 0.5, 0, 0, 1.0 }, { 5, 60, 0.25 / 8, 0 }, { 15, 100, 0, 0 } };
+float test_scenario[][4] = { { 9.5, 500, 0, 0 }, { 10, -200, -0.25 / 2, 0 } };  // scenariusz ekstremalny
 
 
 #include <windows.h>
@@ -66,7 +66,6 @@ struct Frame                                      // g³ówna struktura s³u¿¹ca do
 	int iID;                                      // identyfikator obiektu, którego 
 	int type;                                     // typ ramki: informacja o stateie, informacja o zamkniêciu, komunikat tekstowy, ... 
 	ObjectState state;                            // po³o¿enie, prêdkoœæ: œrodka masy + k¹towe, ...
-
 	long send_time;                               // tzw. znacznik czasu potrzebny np. do obliczenia opóŸnienia
 	int iID_receiver;                             // nr ID odbiorcy wiadomoœci, jeœli skierowana jest tylko do niego
 };
@@ -85,6 +84,7 @@ DWORD WINAPI ReceiveThreadFun(void *ptr)
 		int frame_size = pmt_net->reciv((char*)&frame, sizeof(Frame));   // oczekiwanie na nadejœcie ramki 
 		ObjectState state = frame.state;
 
+		printf("Received frame for vechicle ID: %d\n", frame.iID);
 		//fprintf(f, "odebrano stan iID = %d, ID dla mojego obiektu = %d\n", frame.iID, my_vehicle->iID);
 
 		// Lock the Critical section
@@ -93,17 +93,22 @@ DWORD WINAPI ReceiveThreadFun(void *ptr)
 
 		if ((if_reflection) || (frame.iID != my_vehicle->iID))          // jeœli to nie mój w³asny obiekt
 		{
-			
-			if ((network_vehicles.size() == 0) || (network_vehicles[frame.iID] == NULL))        // nie ma jeszcze takiego obiektu w tablicy -> trzeba go
-				// stworzyæ
-			{
-				MovableObject *ob = new MovableObject();
-				ob->iID = frame.iID;
-				network_vehicles[frame.iID] = ob;		
-				//fprintf(f, "zarejestrowano %d obcy obiekt o ID = %d\n", iLiczbaCudzychOb - 1, CudzeObiekty[iLiczbaCudzychOb]->iID);
+			for (int i = 0; i < 1; i++) {
+				if ((network_vehicles.size() == 0) || (network_vehicles[frame.iID + i] == NULL))        // nie ma jeszcze takiego obiektu w tablicy -> trzeba go
+																									// stworzyæ
+				{
+					MovableObject *ob = new MovableObject();
+					ob->iID = frame.iID + i;
+					network_vehicles[frame.iID+ i] = ob;
+					//fprintf(f, "zarejestrowano %d obcy obiekt o ID = %d\n", iLiczbaCudzychOb - 1, CudzeObiekty[iLiczbaCudzychOb]->iID);
+				}
+				//printf("Changing state for vechicle ID: %d\n", frame.iID);
+				state.predict_strategy = i;
+				network_vehicles[frame.iID + i]->ChangeNetState(state);   // aktualizacja stateu obiektu obcego 	
+
 			}
-			network_vehicles[frame.iID]->ChangeState(state);   // aktualizacja stateu obiektu obcego 	
-			
+
+	
 		}	
 		//Release the Critical section
 		LeaveCriticalSection(&m_cs);               // wyjœcie ze œcie¿ki krytycznej
@@ -123,8 +128,8 @@ void InteractionInitialisation()
 	time_of_cycle = clock();             // pomiar aktualnego czasu
 
 	// obiekty sieciowe typu multicast (z podaniem adresu WZR oraz numeru portu)
-	multi_reciv = new multicast_net("224.13.13.147", 10001);      // obiekt do odbioru ramek sieciowych
-	multi_send = new multicast_net("224.13.13.147", 10001);       // obiekt do wysy³ania ramek
+	multi_reciv = new multicast_net("192.168.1.16", 10001);      // obiekt do odbioru ramek sieciowych
+	multi_send = new multicast_net("192.168.1.16", 10001);       // obiekt do wysy³ania ramek
 
 
 	// uruchomienie w¹tku obs³uguj¹cego odbiór komunikatów:
@@ -142,15 +147,17 @@ void InteractionInitialisation()
 	fprintf(f,"poczatek interakcji\n");
 }
 
-
 // *****************************************************************
 // ****    Wszystko co trzeba zrobiæ w ka¿dym cyklu dzia³ania 
 // ****    aplikacji poza grafik¹ 
+#define PREDICT_NONE 1
+#define PREDICT_SIMPLE 2
+#define PREDICT_ADVANCED 3
 void VirtualWorldCycle()
 {
 	number_of_cyc++;
 	float time_from_start_in_s = (float)(clock() - time_start) / CLOCKS_PER_SEC;  // czas w sek. jaki up³yn¹³ od uruchomienia programu
-
+	
 	if (number_of_cyc % 50 == 0)          // jeœli licznik cykli przekroczy³ pewn¹ wartoœæ, to
 	{                              // nale¿y na nowo obliczyæ œredni czas cyklu fDt
 		char text[256];
@@ -207,11 +214,15 @@ void VirtualWorldCycle()
 	if ((float)(clock() - time_last_send) / CLOCKS_PER_SEC >= 1.0)
 	{
 		Frame frame;
+	
 		frame.state = my_vehicle->State();                   // stan w³asnego obiektu 
 		frame.iID = my_vehicle->iID;
+		frame.state.predict_strategy = 0;
 		multi_send->send((char*)&frame, sizeof(Frame));  // wys³anie komunikatu do pozosta³ych aplikacji co pewien czas
+
 		time_last_send = clock();
 		number_of_send_trials++;
+
 	}
 
 	//          -------------------------------
@@ -224,13 +235,26 @@ void VirtualWorldCycle()
 	EnterCriticalSection(&m_cs);
 	for (map<int, MovableObject*>::iterator it = network_vehicles.begin(); it != network_vehicles.end(); ++it)
 	{
+		// test set 1
+		// NO PREDICTS 21 5.5
+		// PREDICT 2.3 6
+		// SMOOTH(2) PREDICT 2.9 5.3
+		// SMOOTH(5) PREDICT 4.0 6
+		// SMOOTH(10) PREDICT 6.8 8
+		// SMOOTH(100) PREDICT 12 5
+
+		// test set 2
+		// NO PREDICTS 36 30.5
+		// PREDICT 3 17.9
+		// SMOOTH(2) PREDICT 4.2 19
+		// SMOOTH(5) PREDICT 7.3 20.3
+		// SMOOTH(10) PREDICT 13.4 20.4
+		// SMOOTH(100) PREDICT 21 20.3
 		MovableObject *obj = it->second;
 		if (obj)
 		{
-			//obj->state.vPos = ...
-			//obj->state.vV = ....
-			//obj->state.qOrient = ....
-			//obj->state.vV_ang = ....
+			obj->Update(fDt);
+			//obj->ChangeState(obj->NetState());
 		}
 	}
 	//Release the Critical section

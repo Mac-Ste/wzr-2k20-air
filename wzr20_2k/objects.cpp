@@ -65,15 +65,76 @@ MovableObject::MovableObject()             // konstruktor
 MovableObject::~MovableObject()            // destruktor
 {
 }
+#define NET_JUMP_COMP 100
+void MovableObject::Update(float fDt) {
+	static bool isDeltaCalculated = false;
+	static Vector3 dVPos, dV, dVA, dV_Ang, dVA_Ang;
+
+	if (versionState != versionNetState) {
+		float steps_behind = versionNetState - versionState;
+
+		if (steps_behind > NET_JUMP_COMP) {
+			// smoothing is lagging -> reset
+			state.vA = netState.vA;
+			state.vV = netState.vV;
+			state.vPos = netState.vPos;
+			state.vA_ang = netState.vA_ang;
+			state.vV_ang = netState.vV_ang;
+			state.qOrient = netState.qOrient;
+			versionState = versionNetState;
+			isDeltaCalculated = false;
+		}
+		else {
+			if (!isDeltaCalculated) {
+				dVPos = (netState.vPos - state.vPos) / NET_JUMP_COMP;
+				dV = (netState.vV - state.vV) / NET_JUMP_COMP;
+				dVA = (netState.vA - state.vA) / NET_JUMP_COMP;
+				dV_Ang = (netState.vV_ang - state.vV_ang) / NET_JUMP_COMP;
+				dVA_Ang = (netState.vA_ang - state.vA_ang) / NET_JUMP_COMP;
+				isDeltaCalculated = true;
+			}
+			// Smooth  jump between states
+			state.vA += dVA;
+			state.vV += dV;
+			state.vPos += dVPos;
+			state.vA_ang += dVA_Ang;
+			state.vV_ang += dV_Ang;
+			state.qOrient = netState.qOrient;
+			versionState++;
+		}
+	}else {
+		isDeltaCalculated = false;
+		state.vV += state.vA*fDt;
+		state.vPos += state.vV*fDt + state.vA*fDt*fDt / 2;
+		state.vV_ang += state.vA_ang*fDt;
+
+		Vector3 w_obrot = state.vV_ang*fDt + state.vA_ang*fDt*fDt / 2;
+		quaternion q_obrot = AsixToQuat(w_obrot.znorm(), w_obrot.length());
+		state.qOrient = q_obrot * state.qOrient;
+	}
+}
 
 void MovableObject::ChangeState(ObjectState _state)  // przepisanie podanego stateu 
 {                                                // w przypadku obiektów, które nie s¹ symulowane
 	state = _state;
+	versionState++;
+	versionNetState = versionState;
+}
+
+void MovableObject::ChangeNetState(ObjectState _state)  // przepisanie podanego stateu 
+{                                                // w przypadku obiektów, które nie s¹ symulowane
+	netState = _state;
+	versionNetState+=NET_JUMP_COMP;
 }
 
 ObjectState MovableObject::State()                // metoda zwracaj¹ca state obiektu ³¹cznie z iID
 {
 	return state;
+}
+
+ObjectState MovableObject::NetState()                // metoda zwracaj¹ca state obiektu ³¹cznie z iID
+{
+	return netState;
 }
 
 

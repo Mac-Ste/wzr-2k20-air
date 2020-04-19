@@ -10,6 +10,7 @@ struct ObjectState
 	Vector3 vV, vA;            // predkosc, przyspiesznie liniowe
 	Vector3 vV_ang, vA_ang;    // predkosc i przyspieszenie liniowe
 	float wheel_angle;         // kat skretu kol w radianach (w lewo - dodatni)
+	int predict_strategy;
 };
 
 // Klasa opisuj¹ca obiekty ruchome
@@ -17,8 +18,10 @@ class MovableObject
 {
 public:
 	int iID;                  // identyfikator obiektu
-
 	ObjectState state;
+	long versionState;
+	ObjectState netState;
+	long versionNetState;
 
 	float F, Fb;                    // si³y dzia³aj¹ce na obiekt: F - pchajaca do przodu, Fb - w prawo (silnik rakietowy)
 	float breaking_factor;          // stopieñ hamowania Fh_max = friction*Fy*ham
@@ -43,10 +46,13 @@ public:
 	MovableObject();          // konstruktor
 	~MovableObject();
 	void ChangeState(ObjectState state);          // zmiana stateu obiektu
+	void Update(float fDt);
+	void ChangeNetState(ObjectState state);          // zmiana stateu obiektu
 	ObjectState State();        // metoda zwracajaca state obiektu
+	ObjectState NetState();
 	void Simulation(float dt);  // symulacja ruchu obiektu w oparciu o biezacy state, przylozone sily
 	// oraz czas dzialania sil. Efektem symulacji jest nowy state obiektu 
-	void DrawObject();			   // odrysowanie obiektu					
+	void DrawObject();			   // odrysowanie obiektu		
 };
 
 // Klasa opisuj¹ca terrain, po którym poruszaj¹ siê obiekty
