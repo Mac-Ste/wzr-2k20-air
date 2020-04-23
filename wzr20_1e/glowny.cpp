@@ -23,18 +23,33 @@ FILE *f = fopen("wwc_log.txt", "w");    // plik do zapisu informacji testowych
 ObiektRuchomy *moj_pojazd;          // obiekt przypisany do tej aplikacji
 Teren teren;
 
-map<int, ObiektRuchomy*> obiekty_ruchome;
+struct KlientServer {
+	long ip;
+	long last_contact;
+	long obj_id;
+};
 
+map<int, ObiektRuchomy*> obiekty_ruchome;
+map<int, StanObiektu*> obiekty_server;
+map<long, KlientServer*> klienci_server;
 
 float fDt;                          // sredni czas pomiedzy dwoma kolejnymi cyklami symulacji i wyswietlania
 long czas_cyklu_WS, licznik_sym;     // zmienne pomocnicze potrzebne do obliczania fDt
 long czas_start = clock();          // czas uruchomienia aplikacji
 long dlugosc_dnia = 600;         // czas trwania dnia w [s]
 
-multicast_net *multi_reciv;         // wsk do obiektu zajmujacego sie odbiorem komunikatow
-multicast_net *multi_send;          //   -||-  wysylaniem komunikatow
+char* local_ip = "192.168.1.16";
+unicast_net *uni_reciv_client;         
+unicast_net *uni_send_client;          
 
-HANDLE threadReciv;                 // uchwyt w¹tku odbioru komunikatów
+unicast_net *uni_reciv_server;
+unicast_net *uni_send_server;
+
+
+HANDLE threadReciv;                 // uchwyt w¹tku odbioru komunikatów klienta
+
+HANDLE threadServer;                 // uchwyt w¹tku servera
+
 CRITICAL_SECTION m_cs;              // do synchronizacji w¹tków
 extern HWND okno;
 int SHIFTwcisniety = 0;
@@ -46,7 +61,7 @@ int kursor_x = 0, kursor_y = 0;     // po³o¿enie kursora myszy
 extern ParametryWidoku parawid;      // ustawienia widoku zdefiniowane w grafice
 
 
-enum typy_ramek{ STAN_OBIEKTU };
+enum typy_ramek{ STAN_OBIEKTU, ZAMIANA };
 
 
 struct Ramka                                    // g³ówna struktura s³u¿¹ca do przesy³ania informacji
@@ -57,19 +72,22 @@ struct Ramka                                    // g³ówna struktura s³u¿¹ca do p
 	StanObiektu stan;
 };
 
+DWORD WINAPI ServerHandler(void *ptr);
+
 
 //******************************************
 // Funkcja obs³ugi w¹tku odbioru komunikatów 
 DWORD WINAPI FunkcjaWatkuOdbioru(void *ptr)
 {
-	multicast_net *pmt_net = (multicast_net*)ptr;                // wskaŸnik do obiektu klasy multicast_net
+	unicast_net *pmt_net = uni_reciv_client;                // wskaŸnik do obiektu klasy multicast_net
 	int rozmiar;                                               // liczba bajtów ramki otrzymanej z sieci
 	Ramka ramka;
 	StanObiektu stan;
+	unsigned long ip = 0;
 
 	while (1)
 	{
-		rozmiar = pmt_net->reciv((char*)&ramka, sizeof(Ramka));   // oczekiwanie na nadejœcie ramki - funkcja samoblokuj¹ca siê 
+		rozmiar = pmt_net->reciv((char*)&ramka, &ip, sizeof(Ramka));   // oczekiwanie na nadejœcie ramki - funkcja samoblokuj¹ca siê 
 		switch (ramka.typ)
 		{
 		case STAN_OBIEKTU:
@@ -92,11 +110,58 @@ DWORD WINAPI FunkcjaWatkuOdbioru(void *ptr)
 			}
 			break;
 		} // case STAN_OBIEKTU
-
+		case ZAMIANA: {
+		
+			break;
+		}
 		} // switch
 	}  // while(1)
 	return 1;
 }
+
+//******************************************
+// Funkcja obs³ugi w¹tku servera
+DWORD WINAPI ServerHandler(void *ptr)
+{
+	int rozmiar;                                               // liczba bajtów ramki otrzymanej z sieci
+	Ramka ramka;
+	StanObiektu stan;
+	unsigned long ip = 0;
+
+	while (1)
+	{
+		rozmiar = uni_reciv_server->reciv((char*)&ramka, &ip, sizeof(Ramka));   // oczekiwanie na nadejœcie ramki - funkcja samoblokuj¹ca siê 
+		if (klienci_server[ip] == NULL) {
+			klienci_server[ip] = new KlientServer();
+			klienci_server[ip]->ip = ip;
+		}
+
+		klienci_server[ip]->last_contact = ramka.moment_wyslania;
+
+		switch (ramka.typ)
+		{
+		case STAN_OBIEKTU:
+		{
+			klienci_server[ip]->obj_id = ramka.iID;
+			stan = ramka.stan;
+			obiekty_server[ramka.iID] = &(ramka.stan);
+
+			for (map<long, KlientServer*>::iterator it = klienci_server.begin(); it != klienci_server.end(); it++)
+			{
+				uni_send_server->send((char*)&ramka, it->second->ip, sizeof(Ramka));
+			}
+			
+			break;
+		} // case STAN_OBIEKTU
+		case ZAMIANA: {
+
+			break;
+		}
+		} // switch
+	}  // while(1)
+	return 1;
+}
+
 
 // *****************************************************************
 // ****    Wszystko co trzeba zrobiæ podczas uruchamiania aplikacji
@@ -111,16 +176,27 @@ void PoczatekInterakcji()
 	czas_cyklu_WS = clock();             // pomiar aktualnego czasu
 
 	// obiekty sieciowe typu multicast (z podaniem adresu WZR oraz numeru portu)
-	multi_reciv = new multicast_net("224.12.12.83", 10001);      // obiekt do odbioru ramek sieciowych
-	multi_send = new multicast_net("224.12.12.83", 10001);       // obiekt do wysy³ania ramek
+	uni_reciv_client = new unicast_net(35090);      // obiekt do odbioru ramek sieciowych
+	uni_send_client = new unicast_net(35091);       // obiekt do wysy³ania ramek
+	
+	uni_reciv_server = uni_send_client;      // ob	iekt do odbioru ramek sieciowych
+	uni_send_server = uni_reciv_client;       // obiekt do wysy³ania ramek
 
-
-	// uruchomienie watku obslugujacego odbior komunikatow
+	// uruchomienie watku obslugujacego serwer
 	threadReciv = CreateThread(
 		NULL,                        // no security attributes
 		0,                           // use default stack size
 		FunkcjaWatkuOdbioru,                // thread function
-		(void *)multi_reciv,               // argument to thread function
+		(void *)0,               // argument to thread function
+		0,                           // use default creation flags
+		&dwThreadId);                // returns the thread identifier
+
+	// uruchomienie watku obslugujacego odbior komunikatow
+	threadServer = CreateThread(
+		NULL,                        // no security attributes
+		0,                           // use default stack size
+		ServerHandler,                // thread function
+		(void *)0,               // argument to thread function
 		0,                           // use default creation flags
 		&dwThreadId);                // returns the thread identifier
 
@@ -156,7 +232,12 @@ void Cykl_WS()
 
 
 	// wys³anie komunikatu o stanie obiektu przypisanego do aplikacji (moj_pojazd):    
-	multi_send->send((char*)&ramka, sizeof(Ramka));
+	uni_send_client->send((char*)&ramka, local_ip, sizeof(Ramka));
+
+	ramka.stan.wPol.x = ramka.stan.wPol.x - 10;
+	ramka.iID = moj_pojazd->iID+1;
+	uni_send_client->send((char*)&ramka, local_ip, sizeof(Ramka));
+
 }
 
 // *****************************************************************
