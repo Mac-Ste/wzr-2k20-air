@@ -12,6 +12,7 @@ struct StanObiektu
 	Wektor3 wV_kat, wA_kat;   // predkosc i przyspieszenie liniowe
 	float masa;
 	float kat_skretu_kol;
+	int requestedChange;
 };
 
 

@@ -27,10 +27,10 @@ struct KlientServer {
 	long ip;
 	long last_contact;
 	long obj_id;
+	StanObiektu* stan;
 };
 
 map<int, ObiektRuchomy*> obiekty_ruchome;
-map<int, StanObiektu*> obiekty_server;
 map<long, KlientServer*> klienci_server;
 
 float fDt;                          // sredni czas pomiedzy dwoma kolejnymi cyklami symulacji i wyswietlania
@@ -111,7 +111,8 @@ DWORD WINAPI FunkcjaWatkuOdbioru(void *ptr)
 			break;
 		} // case STAN_OBIEKTU
 		case ZAMIANA: {
-		
+			moj_pojazd->ZmienStan(ramka.stan);
+			moj_pojazd->iID = ramka.iID;
 			break;
 		}
 		} // switch
@@ -131,20 +132,30 @@ DWORD WINAPI ServerHandler(void *ptr)
 	while (1)
 	{
 		rozmiar = uni_reciv_server->reciv((char*)&ramka, &ip, sizeof(Ramka));   // oczekiwanie na nadejœcie ramki - funkcja samoblokuj¹ca siê 
-		if (klienci_server[ip] == NULL) {
-			klienci_server[ip] = new KlientServer();
-			klienci_server[ip]->ip = ip;
+		if (klienci_server[ramka.iID] == NULL) {
+			klienci_server[ramka.iID] = new KlientServer();
+			klienci_server[ramka.iID]->ip = ip;
+			klienci_server[ramka.iID]->obj_id = ramka.iID;
+			klienci_server[ramka.iID]->stan = new StanObiektu();
 		}
 
-		klienci_server[ip]->last_contact = ramka.moment_wyslania;
+		klienci_server[ramka.iID]->last_contact = ramka.moment_wyslania;
 
 		switch (ramka.typ)
 		{
 		case STAN_OBIEKTU:
 		{
-			klienci_server[ip]->obj_id = ramka.iID;
 			stan = ramka.stan;
-			obiekty_server[ramka.iID] = &(ramka.stan);
+
+			
+			klienci_server[ramka.iID]->stan->kat_skretu_kol = ramka.stan.kat_skretu_kol;
+			klienci_server[ramka.iID]->stan->masa = ramka.stan.masa;
+			klienci_server[ramka.iID]->stan->qOrient = ramka.stan.qOrient;
+			klienci_server[ramka.iID]->stan->wA = ramka.stan.wA;
+			klienci_server[ramka.iID]->stan->wA_kat = ramka.stan.wA_kat;
+			klienci_server[ramka.iID]->stan->wPol = ramka.stan.wPol;
+			klienci_server[ramka.iID]->stan->wV = ramka.stan.wV;
+			klienci_server[ramka.iID]->stan->wV_kat = ramka.stan.wV_kat;
 
 			for (map<long, KlientServer*>::iterator it = klienci_server.begin(); it != klienci_server.end(); it++)
 			{
@@ -154,6 +165,58 @@ DWORD WINAPI ServerHandler(void *ptr)
 			break;
 		} // case STAN_OBIEKTU
 		case ZAMIANA: {
+			int destId = klienci_server[ramka.iID]->stan->requestedChange;
+			if (destId != 0 && destId != ramka.iID) {
+				int srcId = klienci_server[destId]->stan->requestedChange;
+				if (srcId == ramka.iID) {
+					Ramka odpowiedz;
+					odpowiedz.iID = srcId;
+					odpowiedz.stan = *klienci_server[srcId]->stan;
+					odpowiedz.typ = ZAMIANA;
+
+					uni_send_server->send((char*)&odpowiedz, klienci_server[destId]->ip, sizeof(Ramka));
+
+					odpowiedz.iID = destId;
+					odpowiedz.stan = *klienci_server[destId]->stan;
+					odpowiedz.typ = ZAMIANA;
+					uni_send_server->send((char*)&odpowiedz, klienci_server[srcId]->ip, sizeof(Ramka));
+
+					klienci_server[srcId]->obj_id = destId;
+					klienci_server[destId]->obj_id = srcId;
+
+					KlientServer* tmp = klienci_server[srcId];
+					klienci_server[srcId] = klienci_server[destId];
+					klienci_server[destId] = tmp;
+				}
+				else {
+					klienci_server[ramka.iID]->stan->requestedChange = 0;
+				}
+			}
+			else {
+				Wektor3 sourcePos = klienci_server[ramka.iID]->stan->wPol;
+				long idForChange = ramka.iID;
+				for (map<long, KlientServer*>::iterator it = klienci_server.begin(); it != klienci_server.end(); it++)
+				{
+					if (ramka.iID != it->second->obj_id) {
+						float dist = (sourcePos - it->second->stan->wPol).dlugosc();
+						if (dist < 100)
+						{
+							idForChange = it->second->obj_id;
+							break;
+						}
+					}
+				}
+
+				if (idForChange != ramka.iID) {
+					klienci_server[ramka.iID]->stan->requestedChange = idForChange;
+					klienci_server[idForChange]->stan->requestedChange = ramka.iID;
+				}
+				else {
+					klienci_server[ramka.iID]->stan->requestedChange = 0;
+				}
+			}
+	
+
 
 			break;
 		}
@@ -229,6 +292,7 @@ void Cykl_WS()
 	ramka.typ = STAN_OBIEKTU;
 	ramka.stan = moj_pojazd->Stan();               // stan w³asnego obiektu 
 	ramka.iID = moj_pojazd->iID;
+	
 
 
 	// wys³anie komunikatu o stanie obiektu przypisanego do aplikacji (moj_pojazd):    
@@ -516,6 +580,31 @@ LRESULT CALLBACK WndProc(HWND okno, UINT kod_meldunku, WPARAM wParam, LPARAM lPa
 			//pol_kamery = pol_kamery + kierunek_kamery*0.3; 
 			if (parawid.oddalenie > 0) parawid.oddalenie *= 1.2;
 			else parawid.oddalenie = 0.5;
+			break;
+		}
+		case 'V':
+		{
+			EnterCriticalSection(&m_cs);
+			Ramka ramka;
+			ramka.typ = ZAMIANA;
+			ramka.iID = moj_pojazd->iID;
+			ramka.stan.requestedChange = 0;
+
+			uni_send_client->send((char*)&ramka, local_ip, sizeof(Ramka));
+			LeaveCriticalSection(&m_cs);
+			break;
+		}
+		case 'B':
+		{
+			EnterCriticalSection(&m_cs);
+			Ramka ramka;
+			ramka.typ = ZAMIANA;
+			ramka.iID = moj_pojazd->iID+1;
+			ramka.stan.requestedChange = 0;
+
+			uni_send_client->send((char*)&ramka, local_ip, sizeof(Ramka));
+			LeaveCriticalSection(&m_cs);
+			LeaveCriticalSection(&m_cs);
 			break;
 		}
 		case 'Q':   // widok z góry
