@@ -4,6 +4,13 @@
 	autonomicznych obiektów
 	****************************************************/
 
+/*
+ -       Zad 3
+ -       Dawid Węglarz 160457
+ -       Maciej Sterma 160662
+ -       Marcin Słowikowski 160724
+ -*/
+
 #include <windows.h>
 #include <math.h>
 #include <time.h>
