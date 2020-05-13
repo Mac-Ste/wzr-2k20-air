@@ -12,6 +12,7 @@
 #include <gl\glu.h>
 #include <iterator> 
 #include <map>
+#include <vector>
 using namespace std;
 
 #include "objects.h"
@@ -41,7 +42,7 @@ long czas_cyklu_WS, licznik_sym;     // zmienne pomocnicze potrzebne do obliczan
 float sr_czestosc;                  // srednia czestosc wysylania ramek w [ramkach/s] 
 long czas_start = clock();          // czas od poczatku dzialania aplikacji  
 long czas_istnienia_grupy = clock();    // czas od pocz¹tku istnienia grupy roboczej (czas od uruchom. pierwszej aplikacji)      
-
+int zaznaczony_samochod = -1;
 multicast_net *multi_reciv;         // wsk do obiektu zajmujacego sie odbiorem komunikatow
 multicast_net *multi_send;          //   -||-  wysylaniem komunikatow
 
@@ -74,9 +75,13 @@ float czas_testu_autopilota = 600;              // całkowity czas testu
 extern float WyslaniePrzekazu(int ID_adresata, int typ_przekazu, float wartosc_przekazu);
 
 enum typy_ramek {
-	STAN_OBIEKTU, WZIECIE_PRZEDMIOTU, ODNOWIENIE_SIE_PRZEDMIOTU, KOLIZJA, PRZEKAZ
+	STAN_OBIEKTU, WZIECIE_PRZEDMIOTU, ODNOWIENIE_SIE_PRZEDMIOTU, KOLIZJA, PRZEKAZ, DRUZYNA
 };
 
+enum typy_ramek_druzyna {
+	BRAK=0, ZAPROSZENIE, ZGODA, ODRZUCENIE, ODEJSCIE
+};
+//enum typy_wspolpracy { ZBIERACTWO };
 enum typy_przekazu { GOTOWKA, PALIWO };
 
 struct Ramka
@@ -96,6 +101,7 @@ struct Ramka
 	float wartosc_przekazu;  // iloœæ gotówki lub paliwa 
 	int nr_druzyny;
 
+	int typ_ramki_druzyny;
 	long czas_istnienia;        // czas jaki uplyn¹³ od uruchomienia programu
 };
 
@@ -193,13 +199,80 @@ DWORD WINAPI WatekOdbioru(void *ptr)
 			}
 			break;
 		}
-		
+		case DRUZYNA:
+		{
+			if (ramka.typ_ramki_druzyny == ZAPROSZENIE 
+				&& ramka.iID_adresata == my_vehicle->iID
+				&& ramka.nr_druzyny != my_vehicle->teamID) {
+				// zapro do team'u
+				my_vehicle->akcja_druzyny = ZAPROSZENIE;
+				my_vehicle->id_rekrutera = ramka.iID;
+				my_vehicle->id_teamu = ramka.nr_druzyny;
+			}else if (ramka.iID_adresata == my_vehicle->iID) {
+				my_vehicle->akcja_druzyny = ramka.typ_ramki_druzyny;
+				my_vehicle->id_rekrutera = ramka.iID;
+				my_vehicle->id_teamu = ramka.nr_druzyny;
+			}
+
+			if (ramka.typ_ramki_druzyny == ODEJSCIE && ramka.nr_druzyny == my_vehicle->teamID) {
+				sprintf(par_wid.napis1, "Kumpel %d odszedl :(", ramka.iID);
+			}
+
+		}
 		} // switch po typach ramek
 		//Release the Critical section
 		LeaveCriticalSection(&m_cs);               // wyjście ze ścieżki krytycznej
 	}  // while(1)
 	return 1;
 }
+
+void ZgodaNaDolaczenie() {
+	Ramka ramka;
+	ramka.typ_ramki = DRUZYNA;
+	ramka.typ_ramki_druzyny = ZGODA;
+	ramka.iID_adresata = my_vehicle->id_rekrutera;
+	ramka.iID = my_vehicle->iID;
+	ramka.nr_druzyny = my_vehicle->teamID;
+	int iRozmiar = multi_send->send((char*)&ramka, sizeof(Ramka));
+}
+
+void OdejdzZDruzyny() {
+	if (my_vehicle->teamID != my_vehicle->iID) {
+		Ramka ramka;
+		ramka.typ_ramki = DRUZYNA;
+		ramka.typ_ramki_druzyny = ODEJSCIE;
+		ramka.iID = my_vehicle->iID;
+		ramka.nr_druzyny = my_vehicle->teamID;
+		int iRozmiar = multi_send->send((char*)&ramka, sizeof(Ramka));
+		my_vehicle->teamID = my_vehicle->iID;
+	}
+
+}
+
+void OdmowienieNaDolaczenie() {
+	Ramka ramka;
+	ramka.typ_ramki = DRUZYNA;
+	ramka.typ_ramki_druzyny = ODRZUCENIE;
+	ramka.iID_adresata = my_vehicle->id_rekrutera;
+	ramka.iID = my_vehicle->iID;
+	ramka.nr_druzyny = my_vehicle->teamID;
+	int iRozmiar = multi_send->send((char*)&ramka, sizeof(Ramka));
+}
+
+void ZaprosDoDruzyny(int ID_adresata) {
+	if (zaznaczony_samochod > 0 && network_vehicles[zaznaczony_samochod]->Stan().teamID != my_vehicle->teamID) {
+		Ramka ramka;
+		ramka.typ_ramki = DRUZYNA;
+		ramka.typ_ramki_druzyny = ZAPROSZENIE;
+		ramka.iID_adresata = ID_adresata;
+		ramka.iID = my_vehicle->iID;
+		ramka.nr_druzyny = my_vehicle->teamID;
+
+		sprintf(par_wid.napis2, "Zaproszenie %d do druzyny %d", ramka.iID_adresata, ramka.nr_druzyny);
+		int iRozmiar = multi_send->send((char*)&ramka, sizeof(Ramka));
+	}
+}
+
 
 // *****************************************************************
 // ****    Wszystko co trzeba zrobiæ podczas uruchamiania aplikacji
@@ -211,7 +284,6 @@ void PoczatekInterakcji()
 	my_vehicle = new MovableObject(&terrain);    // tworzenie wlasnego obiektu
 	if (if_different_skills == false)
 		my_vehicle->umiejetn_sadzenia = my_vehicle->umiejetn_zb_monet = my_vehicle->umiejetn_zb_paliwa = 1.0;
-
 
 	czas_cyklu_WS = clock();             // pomiar aktualnego czasu
 
@@ -256,6 +328,38 @@ void Cykl_WS()
 	my_vehicle->Symulacja(fDt);                    // symulacja w³asnego obiektu
 	terrain.WstawObiektWsektory(my_vehicle);
 
+	char txt[200];
+	switch (my_vehicle->akcja_druzyny) {
+	case ZGODA:
+	{
+		sprintf(txt, "HURA! %d przyjal twoje zapro.", my_vehicle->id_rekrutera);
+		MessageBox(okno, txt, "HURA", MB_OK);
+		break;
+	}
+	case ODRZUCENIE:
+	{
+		sprintf(txt, "Niestety! %d nie przyjal twojego zapro :sadpanda:", my_vehicle->id_rekrutera);
+		MessageBox(okno, txt, "Niestety", MB_OK);
+		break;
+	}
+
+	case ZAPROSZENIE:
+	{
+		sprintf(txt, "Czy przyjmujesz zapro do %d od %d ?", my_vehicle->id_teamu, my_vehicle->id_rekrutera);
+		if (MessageBox(okno, txt, "Zaproszenie", MB_YESNO) == IDYES) {
+			my_vehicle->teamID = my_vehicle->id_teamu;
+			ZgodaNaDolaczenie();
+		}
+		else {
+			OdmowienieNaDolaczenie();
+		}
+		break;
+	}
+
+	}
+	my_vehicle->akcja_druzyny = BRAK;
+
+
 
 	if ((my_vehicle->iID_kolid > -1) &&             // wykryto kolizjê - wysy³am specjaln¹ ramkê, by poinformowaæ o tym drugiego uczestnika
 		(my_vehicle->iID_kolid != my_vehicle->iID)) // oczywiœcie wtedy, gdy nie chodzi o mój pojazd
@@ -280,6 +384,7 @@ void Cykl_WS()
 	ramka.typ_ramki = STAN_OBIEKTU;
 	ramka.stan = my_vehicle->Stan();         // stan w³asnego obiektu 
 	ramka.iID = my_vehicle->iID;
+	ramka.nr_druzyny = my_vehicle->teamID;
 	ramka.czas_istnienia = clock() - czas_start;
 	int iRozmiar = multi_send->send((char*)&ramka, sizeof(Ramka));
 
@@ -358,9 +463,6 @@ float WyslaniePrzekazu(int ID_adresata, int typ_przekazu, float wartosc_przekazu
 
 	return ramka.wartosc_przekazu;
 }
-
-
-
 
 
 //deklaracja funkcji obslugi okna
@@ -546,11 +648,18 @@ void KlawiszologiaSterowania(UINT kod_meldunku, WPARAM wParam, LPARAM lParam)
 				{
 					network_vehicles[index_min]->czy_zazn = 1 - network_vehicles[index_min]->czy_zazn;
 
-					if (network_vehicles[index_min]->czy_zazn)
+					if (network_vehicles[index_min]->czy_zazn) {
 						sprintf(par_wid.napis2, "zaznaczono_ obiekt_ID_%d", network_vehicles[index_min]->iID);
+						zaznaczony_samochod = index_min;
+					}
+					else {
+						zaznaczony_samochod = -1;
+					}
+						
 				}
 				else
 				{
+					zaznaczony_samochod = -1;
 					terrain.ZaznaczOdznaczPrzedmiotLubGrupe(index_min);
 				}
 				//char lan[256];
@@ -772,7 +881,14 @@ void KlawiszologiaSterowania(UINT kod_meldunku, WPARAM wParam, LPARAM lParam)
 			Lwcisniety = true;
 			break;
 		
-		
+		case VK_RETURN: {
+			ZaprosDoDruzyny(zaznaczony_samochod);
+			break;
+		}
+		case 'P': {
+			OdejdzZDruzyny();
+			break;
+		}
 
 		} // switch po klawiszach
 

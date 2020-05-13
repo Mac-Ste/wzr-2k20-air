@@ -60,7 +60,7 @@ MovableObject::MovableObject(Terrain *t)             // konstruktor
 	fprintf(f, "Nowy obiekt: iID = %d\n", iID);
 	iID_wlasc = iID;           // identyfikator w³aœciciela obiektu
 	czy_autonom = 0;
-
+	teamID = iID;
 	pieniadze = 1000;    // np. dolarów
 	ilosc_paliwa = 10.0;   // np. kilogramów paliwa 
 
@@ -80,7 +80,7 @@ MovableObject::MovableObject(Terrain *t)             // konstruktor
 	przeswit = 0.0;           // wysokoœæ na której znajduje siê podstawa obiektu
 	dl_przod = 1.0;           // odleg³oœæ od przedniej osi do przedniego zderzaka 
 	dl_tyl = 0.2;             // odleg³oœæ od tylniej osi do tylniego zderzaka
-
+	akcja_druzyny = 0;
 	iID_kolid = -1;           // na razie brak kolizji 
 
 	//wPol.y = przeswit+wysokosc/2 + 10;
@@ -120,6 +120,7 @@ MovableObject::~MovableObject()            // destruktor
 void MovableObject::ZmienStan(StanObiektu stan)  // przepisanie podanego stanu 
 {                                                // w przypadku obiektów, które nie s¹ symulowane
 	this->iID = stan.iID;
+	this->teamID = stan.teamID;
 
 	this->wPol = stan.wPol;
 	this->qOrient = stan.qOrient;
@@ -140,6 +141,7 @@ StanObiektu MovableObject::Stan()                // metoda zwracaj¹ca stan obiek
 	StanObiektu stan;
 
 	stan.iID = iID;
+	stan.teamID = teamID;
 	stan.qOrient = qOrient;
 	stan.wA = wA;
 	stan.wA_kat = wA_kat;
@@ -822,6 +824,11 @@ void MovableObject::Rysuj()
 	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, Surface);
 	glRasterPos2f(0.30, 1.20);
 	glPrint("%d", iID);
+
+	GLfloat Surface2[] = { 2.0f, 1.0f, 1.0f, 1.0f };
+	glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, Surface2);
+	glRasterPos2f(0.30, 1.50);
+	glPrint("%d", teamID);
 	glPopMatrix();
 }
 

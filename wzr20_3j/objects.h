@@ -8,6 +8,7 @@ extern class Terrain;
 struct StanObiektu
 {
 	int iID;                  // identyfikator obiektu
+	int teamID;				  // id druzyny
 	Wektor3 wPol;             // polozenie obiektu (œrodka geometrycznego obiektu) 
 	kwaternion qOrient;       // orientacja (polozenie katowe)
 	Wektor3 wV, wA;            // predkosc, przyspiesznie liniowe
@@ -24,6 +25,7 @@ class MovableObject
 {
 public:
 	int iID;                  // identyfikator obiektu
+	int teamID;				  // brak druzyny iID == teamID
 
 	// parametry stanu:
 	Wektor3 wPol;             // polozenie obiektu
@@ -39,6 +41,9 @@ public:
 	float alfa;               // kat skretu kol w radianach (w lewo - dodatni)
 
 
+	int akcja_druzyny;
+	int id_rekrutera;
+	int id_teamu;
 
 	// decyzje zwi¹zane z trwa³¹ wspó³prac¹ polegaj¹c¹ na dzieleniu siê
 	// paliwem i gotówk¹ pó³ na pó³:
